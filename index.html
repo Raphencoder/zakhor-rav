@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Zakhor — Relecture des cartes</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --bg: #f6f3ea;
+    --card: #ffffff;
+    --text: #1b1b1b;
+    --muted: #555049;
+    --line: #d9d2c0;
+    --accent: #1f3a68;
+    --ok: #1d6b35;
+    --ok-bg: #e3f3e7;
+    --fix: #9a4a00;
+    --fix-bg: #fdf0dd;
+    --err: #a3201b;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 19px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  main { max-width: 680px; margin: 0 auto; padding: 16px 16px calc(32px + env(safe-area-inset-bottom)); }
+  h1 { font-size: 27px; line-height: 1.25; margin: 8px 0 4px; color: var(--accent); }
+  h2 { font-size: 21px; margin: 24px 0 10px; }
+  p { margin: 8px 0; }
+  .muted { color: var(--muted); }
+  .hidden { display: none !important; }
+  button { font: inherit; cursor: pointer; }
+  .pre { white-space: pre-line; overflow-wrap: anywhere; }
+
+  /* Barre de progression */
+  .progress { margin: 14px 0 6px; }
+  .progress-label { font-size: 21px; font-weight: 700; }
+  .bar { height: 14px; background: #e6dfcc; border-radius: 7px; overflow: hidden; margin-top: 6px; }
+  .bar > span { display: block; height: 100%; background: var(--ok); width: 0; transition: width .3s; }
+  .bar.small { height: 9px; margin-top: 8px; }
+
+  /* Liste des chapitres */
+  .chapters { list-style: none; padding: 0; margin: 0; }
+  .chapters li + li { margin-top: 10px; }
+  .chapter-btn {
+    width: 100%; text-align: left; background: var(--card); color: var(--text);
+    border: 1.5px solid var(--line); border-radius: var(--radius); padding: 14px 16px;
+  }
+  .chapter-btn:active { background: #efeadc; }
+  .chapter-name { font-weight: 600; display: block; }
+  .chapter-count { color: var(--muted); font-size: 17px; }
+  .chapter-btn.done { border-color: var(--ok); }
+  .chapter-btn.done .chapter-count { color: var(--ok); font-weight: 600; }
+
+  /* Vue carte */
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .back {
+    background: none; border: 1.5px solid var(--accent); color: var(--accent);
+    border-radius: 10px; padding: 10px 14px; font-weight: 600; min-height: 48px;
+  }
+  .position { color: var(--muted); font-size: 17px; text-align: right; }
+  .card {
+    background: var(--card); border: 1.5px solid var(--line); border-radius: var(--radius);
+    padding: 18px 18px 20px; margin-top: 14px;
+  }
+  .chapter-label { color: var(--accent); font-weight: 700; font-size: 17px; }
+  .type-label { color: var(--muted); font-size: 16px; }
+  .label { font-size: 15px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 18px 0 4px; }
+  .scenario { background: #f1ede1; border-radius: 10px; padding: 12px 14px; }
+  .question { font-size: 22px; font-weight: 700; line-height: 1.4; }
+  .choices { list-style: none; padding: 0; margin: 6px 0 0; }
+  .choices li { border: 1.5px solid var(--line); border-radius: 10px; padding: 10px 14px; margin-top: 8px; }
+  .choices li.right { border: 2.5px solid var(--ok); background: var(--ok-bg); font-weight: 700; }
+  .choices li.right::after { content: "  ✅ bonne réponse"; color: var(--ok); font-weight: 700; white-space: nowrap; }
+  .answer { background: var(--ok-bg); border-left: 5px solid var(--ok); border-radius: 8px; padding: 10px 14px; font-weight: 600; }
+  .reference { font-style: italic; }
+  .status { margin-top: 16px; padding: 10px 14px; border-radius: 10px; font-size: 17px; }
+  .status.ok { background: var(--ok-bg); color: var(--ok); }
+  .status.fix { background: var(--fix-bg); color: var(--fix); }
+
+  /* Boutons de verdict */
+  .actions { display: grid; gap: 12px; margin-top: 18px; }
+  .big {
+    width: 100%; min-height: 64px; border-radius: var(--radius); border: 2px solid transparent;
+    font-size: 22px; font-weight: 700; padding: 12px;
+  }
+  .big:disabled { opacity: .55; }
+  .big.ok { background: var(--ok); color: #fff; }
+  .big.fix { background: var(--fix-bg); color: var(--fix); border-color: var(--fix); }
+  .big.skip { background: var(--card); color: var(--muted); border-color: var(--line); }
+  .big.send { background: var(--fix); color: #fff; }
+  .big.primary { background: var(--accent); color: #fff; }
+  .fix-box { margin-top: 14px; }
+  .fix-box label { font-weight: 700; display: block; margin-bottom: 6px; }
+  textarea {
+    width: 100%; min-height: 140px; font: inherit; padding: 12px; border-radius: 10px;
+    border: 2px solid var(--fix); background: #fff; color: var(--text); resize: vertical;
+  }
+  .link-btn { background: none; border: none; color: var(--accent); text-decoration: underline; padding: 12px 0; font-size: 18px; }
+
+  .message { background: var(--card); border: 1.5px solid var(--line); border-radius: var(--radius); padding: 22px 18px; margin-top: 24px; }
+  .message.error { border-color: var(--err); }
+  .message.error h1 { color: var(--err); }
+  .inline-error { color: var(--err); font-weight: 600; margin-top: 10px; }
+  .toast {
+    position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom)); transform: translateX(-50%);
+    background: var(--text); color: #fff; padding: 12px 20px; border-radius: 30px; font-size: 18px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.25); max-width: 90vw; text-align: center;
+  }
+</style>
+</head>
+<body>
+<main>
+  <!-- Chargement -->
+  <section id="view-loading" class="message">
+    <p>Chargement des cartes…</p>
+  </section>
+
+  <!-- Erreur (lien invalide, réseau…) -->
+  <section id="view-error" class="message error hidden">
+    <h1 id="error-title">Erreur</h1>
+    <p id="error-text" class="pre"></p>
+    <button id="error-retry" class="big primary hidden" type="button">Réessayer</button>
+  </section>
+
+  <!-- Accueil : chapitres -->
+  <section id="view-home" class="hidden">
+    <h1 id="greeting">Chalom</h1>
+    <p class="muted">Merci de relire les cartes de Zakhor. Choisissez un chapitre ; les cartes vous seront présentées une à une.</p>
+    <div class="progress">
+      <div class="progress-label" id="home-progress-label"></div>
+      <div class="bar"><span id="home-progress-bar"></span></div>
+      <p class="muted" id="home-validated"></p>
+    </div>
+    <h2>Chapitres</h2>
+    <ul class="chapters" id="chapter-list"></ul>
+  </section>
+
+  <!-- Une carte -->
+  <section id="view-card" class="hidden">
+    <div class="topbar">
+      <button class="back" id="back-btn" type="button">← Chapitres</button>
+      <div class="position" id="card-position"></div>
+    </div>
+
+    <div id="card-content"></div>
+
+    <div id="chapter-done" class="message hidden">
+      <h1>Chapitre terminé</h1>
+      <p>Vous avez relu toutes les cartes de ce chapitre. Merci beaucoup !</p>
+      <button class="big primary" id="done-back" type="button">Retour aux chapitres</button>
+    </div>
+
+    <div id="card-actions">
+      <div class="actions" id="verdict-buttons">
+        <button class="big ok" id="btn-ok" type="button">✅ Juste</button>
+        <button class="big fix" id="btn-fix" type="button">✏️ À corriger</button>
+        <button class="big skip" id="btn-skip" type="button">⏭ Passer</button>
+      </div>
+      <div class="fix-box hidden" id="fix-box">
+        <label for="fix-comment">Votre remarque (obligatoire)</label>
+        <textarea id="fix-comment" placeholder="Qu'est-ce qui doit être corrigé ?"></textarea>
+        <div class="actions">
+          <button class="big send" id="btn-send" type="button">Envoyer</button>
+        </div>
+        <button class="link-btn" id="btn-cancel" type="button">Annuler</button>
+      </div>
+      <p class="inline-error hidden" id="submit-error" role="alert"></p>
+    </div>
+  </section>
+</main>
+<div class="toast hidden" id="toast" role="status"></div>
+
+<script>
+// ── Configuration (clés publiques du projet Supabase, comme l'app) ──────────
+const SUPABASE_URL = 'https://bijwowruvuhwyhdzjqvw.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_vBzFPCz1PnreIqGp35NvPg_GXPLDuYj';
+
+const TYPE_LABELS = { qa: 'Question', mcq: 'QCM', trueFalse: 'Vrai ou faux', practical: 'Cas pratique' };
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+const state = {
+  token: null,
+  name: '',
+  total: 0,
+  validated: 0,
+  cards: [],          // toutes les cartes renvoyées par rav_cards
+  chapter: null,      // chapitre ouvert
+  current: null,      // carte affichée
+  busy: false,
+};
+
+const $ = (id) => document.getElementById(id);
+let client = null;
+
+// ── Utilitaires ──────────────────────────────────────────────────────────────
+
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === 'class') node.className = v;
+    else node.setAttribute(k, v);
+  }
+  for (const c of children) {
+    if (c === null || c === undefined || c === false) continue;
+    node.append(c instanceof Node ? c : String(c));
+  }
+  return node;
+}
+
+function show(viewId) {
+  for (const id of ['view-loading', 'view-error', 'view-home', 'view-card']) {
+    $(id).classList.toggle('hidden', id !== viewId);
+  }
+  window.scrollTo(0, 0);
+}
+
+function toast(text) {
+  const t = $('toast');
+  t.textContent = text;
+  t.classList.remove('hidden');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => t.classList.add('hidden'), 1800);
+}
+
+// Ordre des chapitres : Ch. 1 … Ch. 30, puis Glossaire, puis le reste.
+function chapterKey(name) {
+  const m = /^Ch\. (\d+)(?: |$)/.exec(name);
+  if (m) return Number(m[1]);
+  if (name.startsWith('Glossaire')) return 1000;
+  return 2000;
+}
+
+function compareChapters(a, b) {
+  return chapterKey(a) - chapterKey(b) || a.localeCompare(b, 'fr');
+}
+
+function compareIds(a, b) {
+  return a.localeCompare(b, 'fr', { numeric: true });
+}
+
+function isReviewed(card) {
+  return card.my_verdict === 'ok' || card.my_verdict === 'fix';
+}
+
+function greetingName(name) {
+  return /^rav\b/i.test(name) ? name : 'Rav ' + name;
+}
+
+// Classe une erreur Supabase en message clair pour le Rav.
+function describeError(error) {
+  const msg = (error && (error.message || String(error))) || '';
+  if (error && (error.code === '28000' || error.code === 'PGRST202' || /lien invalide/i.test(msg))) {
+    return { kind: 'invalid' };
+  }
+  if (!navigator.onLine || /failed to fetch|networkerror|load failed|network request failed|fetch/i.test(msg)) {
+    return { kind: 'network' };
+  }
+  return { kind: 'server', detail: msg };
+}
+
+function showError(kind, detail) {
+  const retry = $('error-retry');
+  if (kind === 'invalid') {
+    $('error-title').textContent = 'Lien invalide';
+    $('error-text').textContent =
+      "Ce lien de relecture n'est pas reconnu.\nVérifiez que vous avez ouvert le lien complet reçu par message, " +
+      "ou demandez un nouveau lien à Raphaël.";
+    retry.classList.add('hidden');
+  } else if (kind === 'network') {
+    $('error-title').textContent = 'Connexion impossible';
+    $('error-text').textContent = 'Les cartes n\'ont pas pu être chargées.\nVérifiez votre connexion Internet, puis réessayez.';
+    retry.classList.remove('hidden');
+  } else {
+    $('error-title').textContent = 'Erreur du serveur';
+    $('error-text').textContent = 'Une erreur est survenue. Réessayez dans un instant.' + (detail ? '\n\n(' + detail + ')' : '');
+    retry.classList.remove('hidden');
+  }
+  show('view-error');
+}
+
+// ── Chargement ───────────────────────────────────────────────────────────────
+
+async function load() {
+  show('view-loading');
+  const [session, cards] = await Promise.all([
+    client.rpc('rav_session', { p_token: state.token }),
+    client.rpc('rav_cards', { p_token: state.token }),
+  ]);
+  const error = session.error || cards.error;
+  if (error) {
+    const e = describeError(error);
+    showError(e.kind, e.detail);
+    return;
+  }
+  state.name = session.data.name;
+  state.total = session.data.total;
+  state.validated = session.data.validated;
+  state.cards = cards.data.slice().sort((a, b) => compareChapters(a.chapter, b.chapter) || compareIds(a.id, b.id));
+  renderHome();
+  show('view-home');
+}
+
+// ── Accueil ──────────────────────────────────────────────────────────────────
+
+function renderHome() {
+  const reviewed = state.cards.filter(isReviewed).length;
+  const total = state.cards.length;
+  $('greeting').textContent = 'Chalom ' + greetingName(state.name);
+  $('home-progress-label').textContent = reviewed + ' / ' + total + ' relues';
+  $('home-progress-bar').style.width = (total ? (100 * reviewed / total) : 0) + '%';
+  $('home-validated').textContent = state.validated + ' carte' + (state.validated > 1 ? 's' : '') + ' validée' + (state.validated > 1 ? 's' : '') + ' au total.';
+
+  const byChapter = new Map();
+  for (const c of state.cards) {
+    if (!byChapter.has(c.chapter)) byChapter.set(c.chapter, []);
+    byChapter.get(c.chapter).push(c);
+  }
+  const list = $('chapter-list');
+  list.replaceChildren();
+  for (const name of [...byChapter.keys()].sort(compareChapters)) {
+    const cards = byChapter.get(name);
+    const done = cards.filter(isReviewed).length;
+    const complete = done === cards.length;
+    const bar = el('div', { class: 'bar small' }, el('span'));
+    bar.firstChild.style.width = (100 * done / cards.length) + '%';
+    const btn = el('button', { class: 'chapter-btn' + (complete ? ' done' : ''), type: 'button' },
+      el('span', { class: 'chapter-name', dir: 'auto' }, name),
+      el('span', { class: 'chapter-count' }, (complete ? '✓ ' : '') + done + ' / ' + cards.length + ' relues'),
+      bar);
+    btn.addEventListener('click', () => openChapter(name));
+    list.append(el('li', null, btn));
+  }
+}
+
+// ── Vue carte ────────────────────────────────────────────────────────────────
+
+function chapterCards() {
+  return state.cards.filter((c) => c.chapter === state.chapter);
+}
+
+// Carte suivante non relue du chapitre, après `afterId` (en boucle), sinon null.
+function nextUnreviewed(afterId) {
+  const cards = chapterCards();
+  const start = afterId ? cards.findIndex((c) => c.id === afterId) + 1 : 0;
+  for (let i = 0; i < cards.length; i++) {
+    const c = cards[(start + i) % cards.length];
+    if (!isReviewed(c) && c.id !== afterId) return c;
+  }
+  // Seule carte non relue restante : on la garde.
+  const current = cards.find((c) => c.id === afterId);
+  return current && !isReviewed(current) ? current : null;
+}
+
+function openChapter(name) {
+  state.chapter = name;
+  history.pushState({ view: 'card' }, '');
+  showCard(nextUnreviewed(null));
+  show('view-card');
+}
+
+function backToChapters() {
+  if (history.state && history.state.view === 'card') {
+    history.back();          // le popstate réaffiche l'accueil
+  } else {
+    goHome();
+  }
+}
+
+function goHome() {
+  state.chapter = null;
+  state.current = null;
+  renderHome();
+  show('view-home');
+}
+
+function resetActions() {
+  $('fix-box').classList.add('hidden');
+  $('verdict-buttons').classList.remove('hidden');
+  $('fix-comment').value = '';
+  $('submit-error').classList.add('hidden');
+  setBusy(false);
+}
+
+function showCard(card) {
+  state.current = card;
+  resetActions();
+  const cards = chapterCards();
+  const done = cards.filter(isReviewed).length;
+  $('card-position').textContent = done + ' / ' + cards.length + ' relues';
+  const content = $('card-content');
+  content.replaceChildren();
+  $('chapter-done').classList.toggle('hidden', card !== null);
+  $('card-actions').classList.toggle('hidden', card === null);
+  if (card === null) return;
+
+  const box = el('article', { class: 'card' },
+    el('div', { class: 'chapter-label', dir: 'auto' }, card.chapter),
+    el('div', { class: 'type-label' }, TYPE_LABELS[card.type] || card.type));
+
+  if (card.scenario) {
+    box.append(el('div', { class: 'label' }, 'Cas'),
+      el('div', { class: 'scenario pre', dir: 'auto' }, card.scenario));
+  }
+  box.append(el('div', { class: 'label' }, 'Question'),
+    el('div', { class: 'question pre', dir: 'auto' }, card.question));
+
+  const choices = Array.isArray(card.choices) ? card.choices : [];
+  const answerInChoices = choices.includes(card.answer);
+  if (choices.length) {
+    const ul = el('ul', { class: 'choices' });
+    for (const ch of choices) {
+      ul.append(el('li', { class: 'pre' + (ch === card.answer ? ' right' : ''), dir: 'auto' }, ch));
+    }
+    box.append(el('div', { class: 'label' }, 'Choix'), ul);
+  }
+  if (!answerInChoices) {
+    box.append(el('div', { class: 'label' }, 'Réponse'),
+      el('div', { class: 'answer pre', dir: 'auto' }, card.answer));
+  }
+  if (card.explanation) {
+    box.append(el('div', { class: 'label' }, 'Pourquoi'),
+      el('div', { class: 'pre', dir: 'auto' }, card.explanation));
+  }
+  box.append(el('div', { class: 'label' }, 'Référence'),
+    el('div', { class: 'reference pre', dir: 'auto' }, card.reference || '—'));
+
+  if (card.validated && card.validated_by) {
+    box.append(el('div', { class: 'status ok' }, '✓ Déjà validée par ' + card.validated_by));
+  }
+  content.append(box);
+}
+
+function setBusy(busy) {
+  state.busy = busy;
+  for (const id of ['btn-ok', 'btn-fix', 'btn-skip', 'btn-send']) $(id).disabled = busy;
+  $('btn-send').textContent = busy ? 'Envoi…' : 'Envoyer';
+}
+
+async function submit(verdict) {
+  if (state.busy || !state.current) return;
+  const card = state.current;
+  const comment = $('fix-comment').value.trim();
+  if (verdict === 'fix' && !comment) {
+    showSubmitError('Merci d\'écrire votre remarque avant d\'envoyer.');
+    $('fix-comment').focus();
+    return;
+  }
+  setBusy(true);
+  $('submit-error').classList.add('hidden');
+  const { error } = await client.rpc('rav_submit', {
+    p_token: state.token,
+    p_card_id: card.id,
+    p_verdict: verdict,
+    p_comment: verdict === 'fix' ? comment : null,
+  });
+  if (error) {
+    setBusy(false);
+    const e = describeError(error);
+    if (e.kind === 'invalid') { showError('invalid'); return; }
+    showSubmitError(e.kind === 'network'
+      ? 'Envoi impossible : vérifiez votre connexion Internet, puis appuyez de nouveau.'
+      : 'Envoi impossible (' + e.detail + '). Réessayez.');
+    return;
+  }
+  // Mise à jour locale (évite de tout recharger)
+  if (verdict === 'ok' && !card.validated) state.validated++;
+  if (verdict === 'fix' && card.validated) state.validated--;
+  card.my_verdict = verdict;
+  card.my_comment = verdict === 'fix' ? comment : null;
+  card.validated = verdict === 'ok';
+  card.validated_by = verdict === 'ok' ? state.name : null;
+  toast(verdict === 'ok' ? '✅ Enregistré, merci' : '✏️ Remarque envoyée, merci');
+  showCard(nextUnreviewed(card.id));
+  window.scrollTo(0, 0);
+}
+
+function showSubmitError(text) {
+  const e = $('submit-error');
+  e.textContent = text;
+  e.classList.remove('hidden');
+}
+
+// ── Démarrage ────────────────────────────────────────────────────────────────
+
+function init() {
+  $('back-btn').addEventListener('click', backToChapters);
+  $('done-back').addEventListener('click', backToChapters);
+  $('error-retry').addEventListener('click', () => (client ? start() : location.reload()));
+  $('btn-ok').addEventListener('click', () => submit('ok'));
+  $('btn-fix').addEventListener('click', () => {
+    $('verdict-buttons').classList.add('hidden');
+    $('fix-box').classList.remove('hidden');
+    $('submit-error').classList.add('hidden');
+    $('fix-comment').focus();
+  });
+  $('btn-cancel').addEventListener('click', resetActions);
+  $('btn-send').addEventListener('click', () => submit('fix'));
+  $('btn-skip').addEventListener('click', () => {
+    if (state.busy || !state.current) return;
+    const next = nextUnreviewed(state.current.id);
+    if (next === state.current) {
+      toast('C\'est la dernière carte non relue de ce chapitre');
+      return;
+    }
+    showCard(next);
+    window.scrollTo(0, 0);
+  });
+  window.addEventListener('popstate', () => { if (state.chapter !== null) goHome(); });
+
+  const token = new URLSearchParams(location.search).get('t');
+  if (!token || !UUID_RE.test(token.trim())) {
+    showError('invalid');
+    return;
+  }
+  state.token = token.trim();
+  if (!window.supabase || !window.supabase.createClient) {
+    showError('network');   // la bibliothèque n'a pas pu être téléchargée : Réessayer recharge la page
+    return;
+  }
+  client = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+  start();
+}
+
+function start() {
+  load().catch((err) => {
+    const e = describeError(err);
+    showError(e.kind, e.detail);
+  });
+}
+
+init();
+</script>
+</body>
+</html>
